@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export default function TaskScheduler() {
   const [messages, setMessages] = useState([
@@ -11,6 +11,18 @@ export default function TaskScheduler() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState('');
   const [calendarId, setCalendarId] = useState('');
+
+  // Ref for auto-scrolling
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Auto-scroll when messages update or loading state changes
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading]);
 
   // Check if user is authenticated on page load
   useEffect(() => {
@@ -50,57 +62,44 @@ export default function TaskScheduler() {
     const userMessage = input;
     setInput('');
     
-    // Add user message to chat immediately
     setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
     setIsLoading(true);
 
     try {
-      // 1. Detect Browser Timezone
       const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-      // 2. Send to our Next.js API Proxy
       const response = await fetch('/api/query/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           query: userMessage,
-          timezone: userTimezone // "America/New_York", "Asia/Kolkata", etc.
+          timezone: userTimezone 
         })
       });
 
       const result = await response.json();
 
-      if (result.success) {
-        // 3. Success: Show confirmation & Refresh Calendar
-        const taskTitle = result.task?.title || "Event";
-        const taskTime = result.schedule?.[0]?.startTime 
-          ? new Date(result.schedule[0].startTime).toLocaleString()
-          : "the scheduled time";
-
+      if (result.response) {
         setMessages(prev => [...prev, { 
           role: 'assistant', 
-          text: `✓ Task scheduled! "${taskTitle}" is now on your calendar for ${taskTime}.` 
+          text: result.response 
         }]);
-        
-        // Force iframe refresh by updating the 'refresh' param
+
+        // Refresh calendar blindly on any response
         setCalendarId(prev => {
             if (!prev) return prev;
             const baseId = prev.split('&refresh=')[0];
             return `${baseId}&refresh=${Date.now()}`;
         });
-
       } else {
-        // 4. Failure: Show error message from server
-        setMessages(prev => [...prev, { 
-          role: 'assistant', 
-          text: result.message || 'Sorry, I had trouble scheduling that task. Please try again.' 
-        }]);
+        setMessages(prev => [...prev, { role: 'assistant', text: "Server responded, but with no message." }]);
       }
+
     } catch (error) {
       console.error("Chat Error:", error);
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        text: 'Error: Could not connect to the server. Please check your connection.' 
+        text: 'Error: Could not connect to the server.' 
       }]);
     } finally {
       setIsLoading(false);
@@ -193,6 +192,8 @@ export default function TaskScheduler() {
               </div>
             </div>
           )}
+          {/* Invisible element to scroll to */}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Area */}
@@ -223,12 +224,10 @@ export default function TaskScheduler() {
 
       {/* Calendar View - Right */}
       <div className="flex-1 flex flex-col bg-white">
-        {/* Calendar Header */}
         <div className="p-4 border-b border-gray-200">
           <h2 className="text-xl font-semibold text-gray-800">Your Schedule</h2>
         </div>
 
-        {/* Google Calendar Embed - User's Calendar */}
         <div className="flex-1 relative">
           {calendarId ? (
             <iframe
