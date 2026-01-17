@@ -1,4 +1,3 @@
-// app/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -26,7 +25,7 @@ export default function TaskScheduler() {
       if (data.authenticated) {
         setIsAuthenticated(true);
         setUserEmail(data.email);
-        setCalendarId(data.calendarId);
+        setCalendarId(data.calendarId || data.email);
       }
     } catch (error) {
       console.error('Auth check failed:', error);
@@ -34,7 +33,6 @@ export default function TaskScheduler() {
   };
 
   const handleGoogleLogin = async () => {
-    // Redirect to Google OAuth flow
     window.location.href = '/api/auth/google';
   };
 
@@ -43,6 +41,7 @@ export default function TaskScheduler() {
     setIsAuthenticated(false);
     setUserEmail('');
     setCalendarId('');
+    window.location.href = '/';
   };
 
   const handleSend = async () => {
@@ -51,45 +50,63 @@ export default function TaskScheduler() {
     const userMessage = input;
     setInput('');
     
+    // Add user message to chat immediately
     setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
     setIsLoading(true);
 
     try {
+      // 1. Detect Browser Timezone
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+      // 2. Send to our Next.js API Proxy
       const response = await fetch('/api/query/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          query: userMessage
+          query: userMessage,
+          timezone: userTimezone // "America/New_York", "Asia/Kolkata", etc.
         })
       });
 
       const result = await response.json();
 
       if (result.success) {
+        // 3. Success: Show confirmation & Refresh Calendar
+        const taskTitle = result.task?.title || "Event";
+        const taskTime = result.schedule?.[0]?.startTime 
+          ? new Date(result.schedule[0].startTime).toLocaleString()
+          : "the scheduled time";
+
         setMessages(prev => [...prev, { 
           role: 'assistant', 
-          text: `✓ Task scheduled! "${result.task.title}" is now on your calendar for ${new Date(result.schedule[0].startTime).toLocaleString()}.` 
+          text: `✓ Task scheduled! "${taskTitle}" is now on your calendar for ${taskTime}.` 
         }]);
         
-        // Refresh calendar - trigger reload by updating a key
-        setCalendarId(prev => prev + '&refresh=' + Date.now());
+        // Force iframe refresh by updating the 'refresh' param
+        setCalendarId(prev => {
+            if (!prev) return prev;
+            const baseId = prev.split('&refresh=')[0];
+            return `${baseId}&refresh=${Date.now()}`;
+        });
+
       } else {
+        // 4. Failure: Show error message from server
         setMessages(prev => [...prev, { 
           role: 'assistant', 
-          text: result.message || 'Sorry, I had trouble scheduling that task. Can you provide more details?' 
+          text: result.message || 'Sorry, I had trouble scheduling that task. Please try again.' 
         }]);
       }
     } catch (error) {
+      console.error("Chat Error:", error);
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        text: 'Error: Could not connect to the server. Please try again.' 
+        text: 'Error: Could not connect to the server. Please check your connection.' 
       }]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // If not authenticated, show login screen
   if (!isAuthenticated) {
     return (
       <div className="flex items-center justify-center h-screen bg-gradient-to-br from-blue-500 to-purple-600">
@@ -187,7 +204,7 @@ export default function TaskScheduler() {
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
               placeholder="e.g., Study for exam tomorrow, 2 hours"
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black bg-white placeholder-gray-500"
               disabled={isLoading}
             />
             <button
@@ -213,18 +230,24 @@ export default function TaskScheduler() {
 
         {/* Google Calendar Embed - User's Calendar */}
         <div className="flex-1 relative">
-          <iframe
-            key={calendarId}
-            src={`https://calendar.google.com/calendar/embed?src=${encodeURIComponent(calendarId)}&ctz=Asia%2FKolkata&mode=MONTH&showTitle=0&showNav=1&showPrint=0&showTabs=0&showCalendars=0`}
-            style={{ 
-              border: 0,
-              width: '100%',
-              height: '100%'
-            }}
-            frameBorder="0"
-            scrolling="no"
-            className="absolute inset-0"
-          />
+          {calendarId ? (
+            <iframe
+              key={calendarId}
+              src={`https://calendar.google.com/calendar/embed?src=${encodeURIComponent(calendarId.split('&')[0])}&ctz=Asia%2FKolkata&mode=WEEK&showTitle=0&showNav=1&showPrint=0&showTabs=1`}
+              style={{ 
+                border: 0,
+                width: '100%',
+                height: '100%'
+              }}
+              frameBorder="0"
+              scrolling="no"
+              className="absolute inset-0"
+            />
+          ) : (
+             <div className="flex items-center justify-center h-full text-gray-400">
+                Loading Calendar...
+             </div>
+          )}
         </div>
       </div>
     </div>
